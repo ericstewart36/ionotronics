@@ -839,7 +839,7 @@ prop_cycle = plt.rcParams['axes.prop_cycle']
 colors = prop_cycle.by_key()['color']
 
 # Experimental comparison
-expData = np.genfromtxt('exp_data/pressure_cap_data.csv', delimiter=',')
+expData = np.genfromtxt('pressure_cap_data.csv', delimiter=',')
 
 
 plt.figure()
