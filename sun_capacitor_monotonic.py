@@ -927,7 +927,7 @@ plt.tight_layout()
 plt.savefig("plots/capacitance1.png", dpi=600)
 
 # Experimental comparison
-expData = np.genfromtxt('exp_data/uniaxial_capacitance_stretch_data.csv', delimiter=',')
+expData = np.genfromtxt('uniaxial_capacitance_stretch_data.csv', delimiter=',')
 
 
 plt.figure()
