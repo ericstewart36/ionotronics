@@ -599,7 +599,7 @@ phiRamp = Expression(("3000.e3/phi_norm*(1-exp(-3*t/Tramp))"),
 #phiRamp = Expression(("3000.e3/phi_norm*(3*pow(t/Tramp, 2) - 2*pow(t/Tramp,3) )"),
 #                phi_norm = phi_norm, Tramp = 0.2*2*T2_tot, t = 0.0, degree=3)
 
-freq = 0.1 # Hz
+freq = 30 # Hz
 phiRamp2 = Expression(("3000.e3/phi_norm + 1000.0e3/phi_norm*sin(2*pi*f*t/(2*Tramp))"),
                 phi_norm = phi_norm, pi=np.pi, f=freq, Tramp = T2_tot, t = 0.0, degree=1)
 
