@@ -800,7 +800,7 @@ plt.savefig("plots/cyclic_signals.png", dpi=600)
 
 
 # Experimental comparison
-expData = np.genfromtxt('exp_data/uniaxial_cap_cycle_data.csv', delimiter=',')
+expData = np.genfromtxt('uniaxial_cap_cycle_data.csv', delimiter=',')
 
 plt.figure()
 fig = plt.gcf()
