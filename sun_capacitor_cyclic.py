@@ -24,24 +24,21 @@ Code for hydrogel ionotronics.
     Eric M. Stewart    and    Sooraj Narayan,   
    (ericstew@mit.edu)        (soorajn@mit.edu)     
     
-                   Fall 2022 
-                   
+                    Fall 2022 
    
-Note: This code will yield revelant results from the ionotronics paper, but is
-  not yet fully cleaned up. In the near future I plan to make edits to render 
-  it more readable, remove extraneous features, and provide more detailed 
-  explanatory comments.
+Version history: 
+    - v1, 10/26/22. Initial version for paper submission to JMPS.
+    - v2, 1/5/23. Cleaned up extraneous features, added extra comments.
 
                    
 Code acknowledgments:
-    
+        
     - Jeremy Bleyer, whose `elastodynamics' code was a useful reference for 
       constructing our own implicit dynamic solution procedure.
      (https://comet-fenics.readthedocs.io/en/latest/demo/elastodynamics/demo_elastodynamics.py.html)
          
   
 """
-
 
 # FEniCS package
 from dolfin import *
@@ -74,6 +71,17 @@ parameters["form_compiler"]["cpp_optimize_flags"] = "-O3 -ffast-math -march=nati
 parameters["form_compiler"]["quadrature_degree"] = 2
 
 '''''''''''''''''''''
+CHOOSE ANALYSIS
+'''''''''''''''''''''
+
+# Choose whether to run the pure electrochemical study or the 
+# full mechanical sensing study. (un-comment only one)
+
+#study = "Electrochemical only"
+
+study = "Capacitive strain sensing"
+
+'''''''''''''''''''''
 DEFINE GEOMETRY
 '''''''''''''''''''''
 
@@ -96,7 +104,7 @@ N = 124
 M1 = 60 
 M2 = 2.0 
 M3 = M1/2
-r1 = 1/1.5
+r1 = 1/1.45
 r2 = 1/1.06     
 r3 = r1
 a1 = (1-r1)/(1-r1**M1)
@@ -141,7 +149,8 @@ for i in range(0,len(xMap2)):
 # Over-write the original mesh coordinates with the mapped coordinates
 mesh.coordinates()[:] = xMap2
 
-# Store the coordinates for future use
+# This says "spatial coordinates" but is really the referential coordinates,
+# since the mesh does not convect in FEniCS.
 x = SpatialCoordinate(mesh) 
 
 
@@ -210,7 +219,7 @@ class Omega_2(SubDomain):
 #   which extends into 20% of a layer thickness of the upper I.H.
 class Omega_3(SubDomain):
     def inside(self, x, on_boundary):
-        return (x[1] >= int2 - tol) and (x[1]<= int2 + 0.2*int1)
+        return (x[1] >= int2 - tol) and (x[1]<= int2 + 0.2*int1 + tol)
   
 # index the volumetric subdomains.
 materials = MeshFunction("size_t", mesh, mesh.topology().dim(), 0)
@@ -225,7 +234,6 @@ subdomain_3.mark(materials, 3)
 
 # Define different volume measures for integration.
 dx = Measure('dx', domain=mesh, subdomain_data=materials)
-
 
 # User-defined expression for spatially-varing material properties.
 class mat(UserExpression): 
@@ -247,26 +255,6 @@ class mat(UserExpression):
     def value_shape(self):
         return ()      
     
-# Index which evaluates to 1 in the ``pill-box'' domain, and 0 elsewhere.
-class integralIndex(UserExpression): 
-    def __init__(self, materials, intInd_0, intInd_1, **kwargs):
-        super().__init__(**kwargs)
-        self.materials = materials
-        self.k_0 = intInd_0
-        self.k_1 = intInd_1
-        
-    def eval_cell(self, values, x, cell):
-        if self.materials[cell.index] == 3:
-            values[0] = self.k_0
-        else:
-            values[0] = self.k_1
-            
-    def value_shape(self):
-        return ()      
-
-intInd = integralIndex(materials, Constant(1.), Constant(0.), degree=0)
-
-
 '''''''''''''''''''''
 MATERIAL PARAMETERS
 '''''''''''''''''''''
@@ -292,33 +280,31 @@ cMax = 10000*1e-9            # Reference concentration [#L-3]
 #
 # Electrical permittivity
 vareps0    = Constant(8.85e-12*1e-6)
-vareps_num = mat(materials, Constant(1e4), Constant(1.0), Constant(1e4), degree=1)
+vareps_num = mat(materials, Constant(10e3), Constant(1.0), Constant(10e3))
 vareps_r   = mat(materials, Constant(80), Constant(6.5), Constant(80))
 vareps     = vareps0*vareps_r*vareps_num
 
 # Mass density
-rho = Constant(1e-9) # 1e3 kg/m^3 = 1e-9 mg/um^3
+rho = Constant(1e-9) # 1e3 kg/m^3 = 1e-9 mg/um^3,
 
 # alpha-method parameters
-alpha   = Constant(0.0) 
+alpha   = Constant(0.0) # Here alpha-method is not needed, set \alpha=0
 gamma   = Constant(0.5+alpha)
 beta    = Constant((gamma+0.5)**2/4.)
 
 
 #Simulation time related params (reminder: in microseconds)
-ttd  = 0.01
-# Step in time
-t = 0.0         # initialization of time
-T_tot = 0e6*1.0e6 #200.0 #0.11        # total simulation time 
+t = 0.0         # initialization of time  
 
-#
+# total simulation time 
+T2_tot = 11.0e6 # 11 seconds (1 ramp-up, then 10 cycles @ 1 Hz)
 
-t1 = 15.0e6
-t2 = 35.0e6
-t3 = 2.5e6
-t4 = 52.5e6
-T2_tot = 1.0e6 #0.0001*1.e6 #t1+t2+t3+t4
-dt = T2_tot/500
+# Float value of time step
+dt = 0.05e6 # time step size, 0.05 seconds
+
+# Compiler variable for time step
+dk = Constant(dt)
+
 
 phi_norm = RT/Farad # "Thermal" Volt
 
@@ -326,6 +312,7 @@ phi_norm = RT/Farad # "Thermal" Volt
 '''''''''''''''''''''
    FUNCTION SPACES
 '''''''''''''''''''''
+
 # Define function space, scalar
 U2 = VectorElement("Lagrange", mesh.ufl_cell(), 1)
 P1 = FiniteElement("Lagrange", mesh.ufl_cell(), 1)
@@ -403,22 +390,7 @@ def Piola(F,phi):
         + Kbulk*ln(J)*inv(F.T) + T_max
     
     return TR
-
-# Mass form
-def m(u, u_test):
-    return rho*inner(u, u_test)*dx
-
-# Elastic stiffness form
-def k(u, u_test,cPos,cNeg, phi):
-    return inner(Piola(F_calc(u),phi), grad(u_test))*dx
-
-# Rayleigh damping form
-def c(u, u_test,cPos,cNeg, phi):
-    return eta_m*m(u, u_test) + eta_k*k(u, u_test, cPos,cNeg, phi)
-
-# variable time step
-dk = Constant(0.0)
-
+    
 # Update formula for acceleration
 # a = 1/(2*beta)*((u - u0 - v0*dt)/(0.5*dt*dt) - (1-2*beta)*a0)
 def update_a(u, u_old, v_old, a_old, ufl=True):
@@ -456,9 +428,6 @@ def update_fields(u_proj, u_proj_old, v_old, a_old):
     v_old.vector()[:], a_old.vector()[:] = v_vec, a_vec
     #u_old.vector()[:] = u_proj.vector()
 
-def ppos(x):
-    return (x+abs(x))/2.
-
 def avg(x_old, x_new, alpha):
     return alpha*x_old + (1-alpha)*x_new
 
@@ -489,7 +458,7 @@ cNeg_old = exp(omgNeg_old + phi_old)
 F = F_calc(u_avg)
 C = F.T*F
 Ci = inv(C)
-F_old = F_calc(u_old) #grad(u_old) + Identity(3)
+F_old = F_calc(u_old)
 J = det(F)
 J_old = det(F_old)
 
@@ -499,25 +468,24 @@ J_old = det(F_old)
        WEAK FORMS
 '''''''''''''''''''''''
 
+# Enable inertial forces
 dynSwitch = Constant(1.0)
-     
+
+# Weak forms
 L0 = inner(Piola(F_calc(u_avg), phi_avg), grad(u_test))*dx \
          + dynSwitch*rho*inner(a_new, u_test)*dx 
    
 L1 = dot((cPos-cPos_old)/dk/D,omgPos_test)*dx \
     + (cPos_old)*inner(Ci*matInd*grad(omgPos_avg),grad(omgPos_test))*dx
    
-L3 = dot(vareps*phi_norm*J*Ci*grad(phi_avg),grad(phi_test))*dx \
+L2 = dot(vareps*phi_norm*J*Ci*grad(phi_avg),grad(phi_test))*dx \
      -dot(Farad*matInd*cMax*(cPos-cNeg),phi_test)*dx 
 
-L4 = dot((cNeg-cNeg_old)/dk/D,omgNeg_test)*dx \
+L3 = dot((cNeg-cNeg_old)/dk/D,omgNeg_test)*dx \
     + (cNeg_old)*dot(Ci*matInd*grad(omgNeg_avg),grad(omgNeg_test))*dx
    
-
 # Total weak form
-
-L = (1/Gshear0)*L0 + L1 + L3 + L4 
-
+L = (1/Gshear0)*L0 + L1 + L2 + L3 
 
 # Automatic differentiation tangent:
 a = derivative(L, w, dw)
@@ -526,43 +494,23 @@ a = derivative(L, w, dw)
 BOUNDARY CONDITIONS
 '''''''''''''''''''''''  
 
-# Boundary condition expressions as necessary
-
-phiRamp = Expression(("(250/phi_norm)*t/Tramp"),
-                  phi_norm = phi_norm, Tramp = T_tot, t = 0.0, degree=1)
-
 # Boundary condition definitions
-
-bcs_1 = DirichletBC(ME.sub(2), 0., facets, 8) # Ground center of device
-bcs_2 = DirichletBC(ME.sub(2), 0., facets, 6) # Ground top of device
 bcs_3 = DirichletBC(ME.sub(2), 0., facets, 3) # Ground bottom of device
 
-bcs_4 = DirichletBC(ME.sub(2), phiRamp, facets, 6) # Ground bottom of device
-
-bcs_a = DirichletBC(ME.sub(0).sub(0),0.,facets,2)
-
-
-x_plot = scaleX
-phi_eq = w_old(x_plot, scaleY/2, scaleZ/2)[4]
-#phiRamp = Expression(("1.0e3/phi_norm*(1-exp(-5*t/Tramp)) "),
-#                 phi_norm = phi_norm,  Tramp = T2_tot, t = 0.0, degree=1)
 phiRamp = Expression(("min(1.0e3/phi_norm*(t/Tramp), 1.0e3/phi_norm)"),
-                 phi_eq=phi_eq, phi_norm = phi_norm, pi=np.pi, Tramp = T2_tot, t = 0.0, degree=2)
-#disp = Expression(("5.5*scaleX*t/Tramp"),
-#                  scaleX = scaleX, Tramp = T2_tot, t = 0.0, degree=1)
+                 phi_norm = phi_norm, pi=np.pi, Tramp = 1.0e6, t = 0.0, degree=2)
 
 disp = Expression(("0.02*scaleX*2*abs(t/Tramp - floor(t/Tramp + 0.5))"),
-                  scaleX = scaleX, Tramp = T2_tot, t = 0.0, degree=1)
+                  scaleX = scaleX, Tramp = 1.0e6, t = 0.0, degree=1)
     
 bcs_f = DirichletBC(ME.sub(2),phiRamp,facets,6) # Ramp up phi on top face
 
 #bcs_b1 = DirichletBC(ME.sub(0),Constant((0.,0., 0.)),facets,2) # left face built-in
 bcs_b1 = DirichletBC(ME.sub(0).sub(0),0.0,facets,2) # pull right face
 bcs_b2 = DirichletBC(ME.sub(0).sub(0),disp,facets,7) # pull right face
+bcs_a = DirichletBC(ME.sub(0).sub(0),0.,facets,2) 
 bcs_b3 = DirichletBC(ME.sub(0).sub(1),0.0,facets,3)
 bcs_b4 = DirichletBC(ME.sub(0).sub(2),0.0,facets,5)
-
-
 
 bcs2 = [bcs_3, bcs_a, bcs_b1, bcs_b2, bcs_b3, bcs_b4, bcs_f]
 
@@ -570,164 +518,109 @@ bcs2 = [bcs_3, bcs_a, bcs_b1, bcs_b2, bcs_b3, bcs_b4, bcs_f]
     RUN ANALYSIS
 '''''''''''''''''''''
 
-
 # Output file setup
-file_results = XDMFFile("results/suo_capacitor_3D_triangle.xdmf")
+file_results = XDMFFile("results/capacitive_strain_sensor_3D_cyclic.xdmf")
 file_results.parameters["flush_output"] = True
 file_results.parameters["functions_share_mesh"] = True
 
-
-
-# initialize counter
-ii = 0
+# Give fields descriptive names
 u_v = w_old.sub(0)
-u_v.rename("disp","")
+u_v.rename("displacement","")
 
 omgPos_v = w_old.sub(1)
-omgPos_v.rename("omega", "")
+omgPos_v.rename("omega(+)", "")
 
 phi_v = w_old.sub(2)
 phi_v.rename("phi", "")
 
 omgNeg_v = w_old.sub(3)
-omgNeg_v.rename("omega2", "")
+omgNeg_v.rename("omega(-)", "")
 
+# Write elastic properties to file at time t=0 to see different materials
 Gshear_v = project(1e6*Gshear,W3)
-Gshear_v.rename("Gshear","")
+Gshear_v.rename("G0, MPa","")
 file_results.write(Gshear_v,t)
-
+#
 Kbulk_v = project(1e6*Kbulk,W3)
-Kbulk_v.rename("Kbulk","")
+Kbulk_v.rename("K, MPa","")
 file_results.write(Kbulk_v,t)
 
-intInd_v = project(intInd,W3)
-intInd_v.rename("IntIndex","")
-file_results.write(intInd_v,t)
-
-
-
-# Initialize arrays for plotting later
-Ny = N+1
-x_plot = scaleX
-y = np.sort(np.array(mesh.coordinates()[np.where(mesh.coordinates()[:,0] == x_plot),1])) #np.linspace(-scaleY/2, scaleY/2, Ny)
-y = y[0,:]
-y2 = np.linspace(0, scaleY/10, Ny) 
-
-output_step = [0.,0.001,0.005,5.01, 50.01]
-op_dim = len(output_step)
-phi_var = np.zeros((Ny, op_dim))
-cPos_var = np.zeros((Ny, op_dim))
-#cNeg_var = np.zeros((Ny, op_dim))
-
 voltage_out = np.zeros(100000)
-charge_out = np.zeros(100000)
-disp_out = np.zeros(100000)
+charge_out  = np.zeros(100000)
+disp_out    = np.zeros(100000)
 time_out    = np.zeros(100000)
-trac_out    = np.zeros(100000)
 
-i=0
 ii=0
 
-trac_out    = np.zeros(100000)
-ocv_out    = np.zeros(100000)
-t_out    = np.zeros(100000)
-t = T_tot
-jj = 0
-spike = 0
+StressProblem = NonlinearVariationalProblem(L, w, bcs2, J=a)
 
-# Turn on implicit dynamics
-dynSwitch.assign(Constant(1.0))
+# Set up the non-linear solver
+solver  = NonlinearVariationalSolver(StressProblem)
 
-voltage_out = np.zeros(100000)
-charge_out = np.zeros(100000)
-disp_out = np.zeros(100000)
-time_out    = np.zeros(100000)
-trac_out    = np.zeros(100000)
+# Solver parameters
+prm = solver.parameters
+prm['nonlinear_solver'] = 'newton'
+prm['newton_solver']['linear_solver'] = 'mumps'  
+prm['newton_solver']['absolute_tolerance'] = 1.E-6
+prm['newton_solver']['relative_tolerance'] = 1.E-6
+prm['newton_solver']['maximum_iterations'] = 30
 
-#while (round(t,2) <= round(T_tot + 1.0*T2_tot,2)):
-while (round(t,2) <= round(T_tot + 11.0*T2_tot,2)):
+# function to write results to XDMF at time t
+def writeResults(t):
+    # Displacement
+    file_results.write(u_v,t)
     
-    # Output storage
-    if True:
-        file_results.write(u_v,t)
-        file_results.write(omgPos_v, t)
-        file_results.write(phi_v, t)
-        phi_nonDim = phi_norm/1.e3*phi
-        phi_nonDim = project(phi_nonDim,W)
-        phi_nonDim.rename("phi_Orig","")
-        file_results.write(phi_nonDim, t)
-        file_results.write(omgNeg_v, t)
-        file_results.write(Gshear_v,t)
-        
-        #
-        _w_0,_w_1, _w_2, _w_3 = w_old.split()
+    # Convert phi to Volts before saving
+    phi_Dim = phi_norm/1.e3*phi
+    phi_Dim = project(phi_Dim,W)
+    phi_Dim.rename("phi, V","")
+    file_results.write(phi_Dim, t)
+    
+    # Electrochemical potentials
+    file_results.write(omgPos_v, t)
+    file_results.write(omgNeg_v, t)
+    
 
-    dt = T2_tot/20
+while (round(t,2) <= round(T2_tot,2)):
     
-    
-    #dt = T2_tot/1000
-    dk.assign(dt)
-    
-    
-    if t-T_tot<=T2_tot:
+    # Output storage, also outputs intial state at t=0
+    writeResults(t)
+
+    # update time-varying BCs
+    if t<=1.0e6:
         disp.t = 0.0
     else:
-        disp.t = t - float(alpha*dt) - T_tot - T2_tot 
-    #disp2.t = min(t - T_tot, T2_tot)
-    phiRamp.t = t - float(alpha*dt) - T_tot
-    
-    StressProblem = NonlinearVariationalProblem(L, w, bcs2, J=a)
-    
-    # Set up the non-linear solver
-    solver  = NonlinearVariationalSolver(StressProblem)
-    
-    # Solver parameters
-    prm = solver.parameters
-    prm['nonlinear_solver'] = 'newton'
-    prm['newton_solver']['linear_solver'] = 'petsc'   #'petsc'   #'gmres'
-    prm['newton_solver']['absolute_tolerance'] = 1.E-6    # 1.e-10
-    prm['newton_solver']['relative_tolerance'] = 1.E-6    # 1.e-10
-    prm['newton_solver']['maximum_iterations'] = 60
+        disp.t = t - float(alpha*dt) - 1.0e6 
+    phiRamp.t = t - float(alpha*dt)
     
     
     # Solve the problem
     (iter, converged) = solver.solve()
     
-    
     # output measured device voltage, etc.
-    phi_top = w(x_plot, scaleY/2, scaleZ/2)[4]*phi_norm
-    phi_btm = w(x_plot, -scaleY/2, scaleZ/2)[4]*phi_norm
+    phi_top = w(scaleX, scaleY/2, scaleZ/2)[4]*phi_norm
+    phi_btm = w(scaleX, -scaleY/2, scaleZ/2)[4]*phi_norm
     voltage_out[ii] = phi_top - phi_btm
     disp_out[ii]    = w(scaleX, scaleY/2, scaleZ/2)[0]
     time_out[ii]    = t
-    #trac_out[jj]    = trac_final*(t-T_tot)/(T2_tot)
-    ocv_out[jj] = phi_top - phi_btm
-    t_out[jj]   = t - T_tot -float(alpha*dt)
-    #
+    charge_out[ii] = assemble(Farad*cMax*(cPos-cNeg)*dx(3)) 
     
-    
+    # Update fields for next step
     u_proj = project(u, W2)
     u_proj_old = project(u_old, W2)
     update_fields(u_proj, u_proj_old, v_old, a_old)
     w_old.vector()[:] = w.vector()
     
-    
-    charge_out[ii] = assemble(Farad*cMax*(cPos-cNeg)*dx(3))
-    
-    # increment time
-    t += dt
-    ii = ii + 1
-    jj = jj + 1
-    
-    
     # Print progress of calculation
-    #if ii%10 == 0:
     now = datetime.now()
     current_time = now.strftime("%H:%M:%S")
     print("Step: Sense   |   Simulation Time: {} s  |     Iterations: {}".format(t/1e6, iter))
     print()
+        
+    # increment time, counters
+    t += dt
+    ii = ii + 1
     
-
 # Final step paraview output
 file_results.write(u_v,t)
 file_results.write(omgPos_v, t)
@@ -735,61 +628,63 @@ file_results.write(phi_v, t)
 file_results.write(omgNeg_v, t)
 file_results.write(Gshear_v,t)
 
-# output final measured device voltage
-phi_top = w(x_plot, scaleY/2, scaleZ/2)[4]*phi_norm
-phi_btm = w(x_plot,-scaleY/2., scaleZ/2)[4]*phi_norm
+# output final device voltage, etc.
+phi_top = w(scaleX, scaleY/2, scaleZ/2)[4]*phi_norm
+phi_btm = w(scaleX,-scaleY/2., scaleZ/2)[4]*phi_norm
 disp_out[ii]    = w(scaleX, scaleY/2, scaleZ/2)[0]
-#voltage_out[ii] = phi_top - phi_btm
-#charge_out[ii] = assemble(Farad*cMax*(cPos-cNeg)*dx(3))
-#time_out[ii]    = t
+voltage_out[ii] = phi_top - phi_btm
+charge_out[ii]  = assemble(Farad*cMax*(cPos-cNeg)*dx(3))
+time_out[ii]    = t
 
+'''''''''''''''''''''
+    VISUALIZATION
+'''''''''''''''''''''
 
-
+# Set up font size, initialize colors array
 font = {'size'   : 16}
-
 plt.rc('font', **font)
-
+#
 prop_cycle = plt.rcParams['axes.prop_cycle']
 colors = prop_cycle.by_key()['color']
-font = {'size'   : 16}
 
-# Time signals
+# only plot as far as time_out has time history for.
+ind = np.argmax(time_out)
+
+# extract node coordinates
+y = np.sort(np.array(mesh.coordinates()[:,1])) 
+
+# PLOT 1: Time signals
 fig, (ax1, ax2, ax3) = plt.subplots(3,1, sharex='col')
  
 
 color = colors[2]
 ax1.set_ylabel(r"$V$ (V)") #, color=color)
-ax1.plot(np.insert(time_out[np.where(time_out>T_tot)]/1.e6 - T_tot/1e6, 0, 0 ), np.insert(np.array(voltage_out[np.where(time_out>T_tot)]-ocv_out[0])/1e3, 0, 0),linewidth=3.0, color=color, 
+ax1.plot(np.insert(time_out[np.where(time_out>0.0)]/1.e6, 0, 0 ), np.insert(np.array(voltage_out[np.where(time_out>0.0)])/1e3, 0, 0),linewidth=3.0, color=color, 
          label=r"$V$")
-ax1.axvline(T2_tot/1e6, c='k', linewidth=1.)
+ax1.axvline(1.0, c='k', linewidth=1.)
 ax1.set_ylim(-0.15, 1.15)
 #ax1.tick_params(axis='y', labelcolor=color)
 
 color = colors[3]
 ax3.set_ylabel(r"Q$_{{D}}$ (pC)") #, color=color)
-ax3.plot(np.insert(time_out[np.where(time_out>T_tot)]/1.e6 - T_tot/1e6, 0, 0), np.insert(1e9*charge_out[np.where(time_out>T_tot)],0 ,0),linewidth=3.0, color=color, 
+ax3.plot(np.insert(time_out[np.where(time_out>0.0)]/1.e6, 0, 0), np.insert(1e9*charge_out[np.where(time_out>0.0)],0 ,0),linewidth=3.0, color=color, 
          label=r"Q$_{{D}}$")
 #ax2.tick_params(axis='y', labelcolor=color)
-ax3.axvline(T2_tot/1e6, c='k', linewidth=1.)
+ax3.axvline(1.0, c='k', linewidth=1.)
 #plt.xlim(0,50)
 ax3.set_ylim(22,24)
-#ax3.set_yticks(np.array([0, 12.5, 25]))
 
-'''
-fig.tight_layout()  # otherwise the right y-label is slightly clipped
-plt.savefig("plots/OCV_disp.png", dpi=600)
-'''
-stretch_out = (scaleX + disp_out[np.where(time_out>T_tot)])/scaleX
+stretch_out = (scaleX + disp_out[np.where(time_out>0.0)])/scaleX
 color = colors[0]
 ax2.set_ylabel(r"$\lambda$ (-)") #, color=color)
-ax2.plot(np.insert(time_out[np.where(time_out>T_tot)]/1.e6 - T_tot/1e6, 0, 0), np.insert(stretch_out, 0, 1), color=color, linewidth=3.0)
-ax2.axvline(T2_tot/1e6, c='k', linewidth=1.)
+ax2.plot(np.insert(time_out[np.where(time_out>0.0)]/1.e6, 0, 0), np.insert(stretch_out, 0, 1), color=color, linewidth=3.0)
+ax2.axvline(1.0, c='k', linewidth=1.)
 ax2.set_ylim(0.99, 1.03)
 ax2.set_yticks(np.array([1, 1.01, 1.02]))
 
 
 ax3.set_xlabel(r"Time (s)")
-ax3.set_xlim(0*T2_tot/1e6, 11.0*T2_tot/1e6)
+ax3.set_xlim(0.0, 11.0)
 
 # save figure to file
 fig = plt.gcf()
@@ -799,8 +694,8 @@ plt.savefig("plots/cyclic_signals.png", dpi=600)
 
 
 
-# Experimental comparison
-expData = np.genfromtxt('uniaxial_cap_cycle_data.csv', delimiter=',')
+# PLOT 2: Experimental comparison
+expData = np.genfromtxt('exp_data/uniaxial_cap_cycle_data.csv', delimiter=',')
 
 plt.figure()
 fig = plt.gcf()
@@ -809,11 +704,11 @@ plt.scatter(expData[:,0]*10/expData[-1,0], expData[:,1]/expData[0,1], s=100,
                      edgecolors=(0.0, 0.0, 0.0,1),
                      color=(1, 1, 1, 1),
                      label='Experiment', linewidth=2.0)
-C0 = (1e12)*np.array(charge_out[np.where(time_out==T_tot + T2_tot)])/np.array(voltage_out[np.where(time_out==T_tot + T2_tot)])
+C0 = (1e12)*np.array(charge_out[np.where(time_out== 1.0e6)])/np.array(voltage_out[np.where(time_out==1.0e6)])
 #plt.plot(time_out[np.where(voltage_out!=0)], charge_out[np.where(voltage_out!=0)],linewidth=3.)
-plt.plot(np.array(time_out[np.where(time_out>=T_tot)] - T2_tot + dt)/T2_tot, (1e12)*np.array(charge_out[np.where(time_out>=T_tot)])/np.array(voltage_out[np.where(time_out>=T_tot)])/C0,\
+plt.plot(np.array(time_out[np.where(time_out>=0.0)] - 1.0e6 + dt)/1e6, (1e12)*np.array(charge_out[np.where(time_out>=0.0)])/np.array(voltage_out[np.where(time_out>=0.0)])/C0,\
          label='Simulation', linewidth=3.0, color='k')
-plt.axvline(0/1e6, c='k', linewidth=1.)
+plt.axvline(0, c='k', linewidth=1.)
 plt.xlim(0,10)
 plt.ylim(0.9975,1.030)
 #plt.axis('tight')
