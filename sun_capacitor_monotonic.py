@@ -394,7 +394,7 @@ def Piola(F,phi):
     T_max = vareps0*vareps_r*J*(outer(e_sp,e_sp) - 1/2*(inner(e_sp,e_sp))*Id)*inv(F.T) 
     
     # Piola stress (Gent)
-    TR = J**(-2/3)*Gshear*(Im_gent/(Im_gent+3-I1))*(F - 1/3*tr(C)*inv(F.T))\
+    TR = J**(-2/3)*Gshear*(Im_gent/(Im_gent+3-I1))*(F - 1/3*tr(Cdis)*inv(F.T))\
         + Kbulk*ln(J)*inv(F.T) + T_max
     
     return TR
